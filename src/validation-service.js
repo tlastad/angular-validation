@@ -16,6 +16,8 @@ angular
     var validationAttrs;  // Current Validator attributes
     var commonObj;        // Object of validationCommon service
     var timer;            // timer of user inactivity time
+    var blurHandler;
+    var isValidationCancelled = false;
 
     // service constructor
     var validationService = function() {
@@ -51,6 +53,7 @@ angular
       }else {
         attrs = var1;
       }
+
       // Make sure that we have all required attributes to function properly
       if(typeof attrs !== "object" || !attrs.hasOwnProperty('elmName') || !attrs.hasOwnProperty('rules') || (!attrs.hasOwnProperty('scope') && typeof self.validationAttrs.scope === "undefined") ) {
         throw 'Angular-Validation-Service requires at least the following 3 attributes: {elmName, rules, scope}';
@@ -63,12 +66,21 @@ angular
         return self;
       }
 
+      // copy the element attributes name to use throughout validationCommon
+      // when using dynamic elements, we might have encounter unparsed or uncompiled data, we need to get Angular result with $interpolate
+      if(new RegExp("{{(.*?)}}").test(attrs.elmName)) {
+        attrs.elmName = $interpolate(attrs.elmName)(attrs.scope);
+      }
+      attrs.name = attrs.elmName;
+
       // onBlur make validation without waiting
-      attrs.elm.bind('blur', function(event) {
-        // re-initialize to use current element & remove waiting time & validate
-        self.commonObj.initialize(attrs.scope, attrs.elm, attrs, attrs.ctrl);
-        self.commonObj.typingLimit = 0;
-        attemptToValidate(self, event.target.value);
+      attrs.elm.bind('blur', blurHandler = function(event) {
+        if(!isValidationCancelled) {
+          // re-initialize to use current element & remove waiting time & validate
+          self.commonObj.initialize(attrs.scope, attrs.elm, attrs, attrs.ctrl);
+          self.commonObj.typingLimit = 0;
+          attemptToValidate(self, event.target.value);
+        }
       });
 
       // merge both attributes but 2nd object (attrs) as higher priority, so that for example debounce property inside `attrs` as higher priority over `validatorAttrs`
@@ -77,8 +89,11 @@ angular
 
       // watch the element for any value change, validate it once that happen
 			attrs.scope.$watch(attrs.elmName, function (newVal, oldVal) {
+        // when previous value was set and new value is not, this is most probably an invalid character entered in a type input="text"
+        // we will still call the `.validate()` function so that it shows also the possible other error messages
         if(newVal === undefined && oldVal !== undefined) {
-          self.commonObj.updateErrorMsg("INVALID_KEY_CHAR", {valid: false, translate: true});
+          $timeout.cancel(self.timer);
+          self.commonObj.ctrl.$setValidity('validation', self.commonObj.validate('', true));
           return;
         }
         // from the DOM element, find the Angular controller of this element & add value as well to list of attribtues
@@ -91,30 +106,6 @@ angular
 
       return self;
 		} // addValidator()
-
-    /** Remove all objects in validationsummary and matching objects in FormElementList.
-     * This is for use in a wizard type setting, where you 'move back' to a previous page in wizard.
-     * In this case you need to remove invalid validators that will exist in 'the future'.
-     * @param object Angular Form or Scope Object
-     */
-    function clearInvalidValidatorsInSummary(obj) {
-      var self = this;
-      if (typeof obj === "undefined" || typeof obj.$validationSummary === "undefined") {
-        throw 'checkFormValidity() requires a valid Angular Form or $scope object passed as argument to function properly (ex.: $scope.form1  OR  $scope).';
-      }
-      // Get list of names to remove
-      var elmName = [];
-      for (var i = 0, ln = obj.$validationSummary.length; i < ln; i++) {
-        elmName.push(obj.$validationSummary[i].field);
-      }
-      // Loop on list of names. Cannot loop on obj.$validationSummary as you are removing objects from it in the loop.
-      for (i = 0, ln = elmName.length; i < ln; i++) {
-        if (!!elmName[i]) {
-          self.commonObj.removeFromFormElementObjectList(elmName[i]);
-          self.commonObj.removeFromValidationSummary(obj.$validationSummary, elmName[i]);
-        }
-      }
-    }
 
     /** Check the form validity (can be called by an empty validationService and used by both Directive/Service)
      * Loop through Validation Summary and if any errors found then display them and return false on current function
@@ -146,17 +137,43 @@ angular
       return isValid;
     }
 
+    /** Remove all objects in validationsummary and matching objects in FormElementList.
+     * This is for use in a wizard type setting, where you 'move back' to a previous page in wizard.
+     * In this case you need to remove invalid validators that will exist in 'the future'.
+     * @param object Angular Form or Scope Object
+     */
+    function clearInvalidValidatorsInSummary(obj) {
+      var self = this;
+      if (typeof obj === "undefined" || typeof obj.$validationSummary === "undefined") {
+        throw 'checkFormValidity() requires a valid Angular Form or $scope object passed as argument to function properly (ex.: $scope.form1  OR  $scope).';
+      }
+      // Get list of names to remove
+      var elmName = [];
+      for (var i = 0, ln = obj.$validationSummary.length; i < ln; i++) {
+        elmName.push(obj.$validationSummary[i].field);
+      }
+      // Loop on list of names. Cannot loop on obj.$validationSummary as you are removing objects from it in the loop.
+      for (i = 0, ln = elmName.length; i < ln; i++) {
+        if (!!elmName[i]) {
+          self.commonObj.removeFromFormElementObjectList(elmName[i]);
+          self.commonObj.removeFromValidationSummary(obj.$validationSummary, elmName[i]);
+        }
+      }
+    }
+
     /** Remove a watcher
      * @param object Angular Form or Scope Object
      * @param array/string of element name(s) (name attribute)
+     * @return object self
      */
     function removeValidator(obj, attrs) {
       var self = this;
+      var formElmObj;
+
       if(typeof obj === "undefined" || typeof obj.$validationSummary === "undefined") {
         throw 'checkFormValidity() requires a valid Angular Form or $scope object passed as argument to function properly (ex.: $scope.form1  OR  $scope).';
       }
 
-      var formElmObj;
       if(attrs instanceof Array) {
         // when passed as array, loop through all elements to be removed
         for(var i = 0, ln = attrs.length; i < ln; i++) {
@@ -167,6 +184,8 @@ angular
         formElmObj = self.commonObj.getFormElementByName(attrs);
         removeWatcher(self, formElmObj, obj.$validationSummary);
       }
+
+      return self;
     }
 
     /** Set and initialize global options used by all validators
@@ -198,11 +217,21 @@ angular
       if(!self.commonObj.isFieldRequired() && (value === "" || value === null || typeof value === "undefined")) {
         cancelValidation(self);
         return value;
+      }else {
+        isValidationCancelled = false;
       }
 
       // invalidate field before doing any validation
       if(self.commonObj.isFieldRequired() || !!value) {
         self.commonObj.ctrl.$setValidity('validation', false);
+      }
+
+      // if a field holds invalid characters which are not numbers inside an `input type="number"`, then it's automatically invalid
+      // we will still call the `.validate()` function so that it shows also the possible other error messages
+      if((value === "" || typeof value === "undefined") && self.commonObj.elm.prop('type').toUpperCase() === "NUMBER") {
+        $timeout.cancel(self.timer);
+        self.commonObj.ctrl.$setValidity('validation', self.commonObj.validate(value, true));
+        return value;
       }
 
       // select(options) will be validated on the spot
@@ -230,10 +259,15 @@ angular
      * @param object obj
      */
     function cancelValidation(obj) {
+      isValidationCancelled = true;
       $timeout.cancel(self.timer);
       obj.commonObj.updateErrorMsg('');
       obj.commonObj.ctrl.$setValidity('validation', true);
-      obj.commonObj.elm.unbind('blur'); // unbind onBlur event, if not it will fail when input become dirty & empty
+
+      // unbind onBlur handler (if found) so that it does not fail on a non-required element that is now dirty & empty
+      if(typeof blurHandler !== "undefined") {
+        obj.commonObj.elm.unbind('blur', blurHandler);
+      }
     }
 
     /**
@@ -264,7 +298,7 @@ angular
       unbindWatcher();
 
       // also unbind the blur directly applied on element
-      formElmObj.elm.unbind();
+      //formElmObj.elm.unbind();
 
       // now to remove any errors, we need to make the element untouched, pristine and remove the validation
       // also remove it from the validationSummary list and remove any displayed error
@@ -274,4 +308,5 @@ angular
       self.commonObj.removeFromValidationSummary(validationSummary, formElmObj.fieldName);
       self.commonObj.updateErrorMsg('', { isValid: true, obj: formElmObj });
     }
-}]);
+
+}]); // validationService

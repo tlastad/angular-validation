@@ -48,6 +48,8 @@ myApp.controller('Ctrl', ['$location', '$route', '$scope', '$translate', functio
 // -- Controller to use Angular-Validation Directive
 // -----------------------------------------------
 myApp.controller('CtrlValidationDirective', ['$scope', 'validationService', function ($scope, validationService) {
+  $scope.$validationOptions = { debounce: 1500 }; // you can change default debounce globally
+
   $scope.submitForm = function() {
     if(new validationService().checkFormValidity($scope.form1)) {
       alert('All good, proceed with submit...');
@@ -104,13 +106,13 @@ myApp.controller('CtrlValidationService', ['$scope', '$translate', 'validationSe
     .addValidator('input10', 'date_iso|required')
     .addValidator('input11', 'date_us_long|required')
     .addValidator('input12', 'time')
-    .addValidator('select1', 'required:alt=' + $translate.instant('CHANGE_LANGUAGE'))
+    .addValidator('select1', 'alpha|required:alt=' + $translate.instant('CHANGE_LANGUAGE'))
     .addValidator({elmName: 'input13', rules: 'min_len:5|max_len:10|alpha_dash_spaces|required', validationErrorTo: ".validation-input13"})
     .addValidator('input14', 'alpha|required')
     .addValidator('input15', 'alpha|min_len:3|required')
     .addValidator('input16', 'match:input15,Password|required')
     .addValidator({elmName: 'input17', rules: 'alpha_spaces|exact_len:3|required', debounce: 5000})
-    .addValidator('input18', 'date_iso_min:1999-12-31|required')
+    .addValidator('input18', 'date_iso_min:2001-01-01|required')
     .addValidator('input19', 'date_us_short_between:11/28/99,12/31/15|required')
     .addValidator('area1', 'alpha_dash_spaces|min_len:15|required');
 
